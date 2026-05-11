@@ -165,6 +165,12 @@ document.getElementById('co-sub').textContent=SYM+' · TWSE · '+SEC;
 const $=id=>document.getElementById(id);
 let cd=60,seen=new Set();
 
+function lastTradingDay(){
+  const d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Taipei'}));
+  while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()-1);
+  return d.getFullYear()+'/'+(d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getDate().toString().padStart(2,'0');
+}
+
 function isMarketOpen(){
   const tw=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Taipei'}));
   const day=tw.getDay(),mins=tw.getHours()*60+tw.getMinutes();
@@ -220,8 +226,7 @@ async function fetchPrice(){
     $('i-vol').textContent=(vol/1000).toLocaleString('zh-TW',{maximumFractionDigits:0})+' 張';
     $('i-pct').textContent=(ch>=0?'+':'')+pct.toFixed(2)+'%';
 
-    const dt=it.Date||'';
-    $('i-date').textContent=dt.length===8?dt.slice(0,4)+'/'+dt.slice(4,6)+'/'+dt.slice(6,8):'---';
+    $('i-date').textContent=lastTradingDay();
 
     $('update-time').textContent='更新 '+new Date().toLocaleTimeString('zh-TW');
     setMarketBadge();
@@ -232,39 +237,22 @@ async function fetchPrice(){
   }
 }
 
-// 新聞：嘗試 corsproxy.io → 備援 allorigins
+// 新聞：rss2json.com（自動處理 CORS，回傳 JSON）
 async function fetchNews(){
   if(!seen.size)$('news-list').innerHTML='<div class="empty"><div class="spin"></div><p>載入新聞中...</p></div>';
   const rss='https://news.google.com/rss/search?q='+
-    encodeURIComponent(NAME+' '+SYM+' 股票')+'&hl=zh-TW&gl=TW&ceid=TW:zh-Hant';
-
-  let contents=null;
-  const proxies=[
-    'https://corsproxy.io/?'+encodeURIComponent(rss),
-    'https://api.allorigins.win/get?url='+encodeURIComponent(rss),
-  ];
-
-  for(const px of proxies){
-    try{
-      const r=await fetch(px,{cache:'default'});
-      const j=await r.json();
-      contents=j.contents||j;
-      if(typeof contents==='string'&&contents.includes('<item>'))break;
-      contents=null;
-    }catch(_){contents=null;}
-  }
-
-  if(!contents){
-    $('news-list').innerHTML=`<div class="empty"><div class="ico">📰</div><p>新聞暫時無法載入</p><small><a href="https://news.google.com/search?q=${encodeURIComponent(NAME+' '+SYM)}&hl=zh-TW" target="_blank" style="color:var(--accent)">在 Google 新聞搜尋 →</a></small></div>`;
-    return;
-  }
-
+    encodeURIComponent(NAME+' '+SYM)+'&hl=zh-TW&gl=TW&ceid=TW:zh-Hant';
+  const api='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(rss);
   try{
-    const xml=new DOMParser().parseFromString(contents,'text/xml');
-    const items=[...xml.querySelectorAll('item')];
-    renderNews(items);
+    const r=await fetch(api,{cache:'default'});
+    const j=await r.json();
+    if(j.status==='ok'&&j.items?.length){
+      renderNews(j.items);
+    }else{
+      throw new Error('no items');
+    }
   }catch(_){
-    $('news-list').innerHTML='<div class="empty"><div class="ico">⚠️</div><p>新聞解析失敗</p></div>';
+    $('news-list').innerHTML=`<div class="empty"><div class="ico">📰</div><p>新聞暫時無法載入</p><small><a href="https://news.google.com/search?q=${encodeURIComponent(NAME+' '+SYM)}&hl=zh-TW" target="_blank" style="color:var(--accent)">在 Google 新聞搜尋 →</a></small></div>`;
   }
 }
 
@@ -273,12 +261,10 @@ function renderNews(items){
   const list=$('news-list');list.innerHTML='';
   if(!items.length){list.innerHTML='<div class="empty"><div class="ico">📭</div><p>暫無消息</p></div>';return;}
   items.slice(0,40).forEach(item=>{
-    const title=(item.querySelector('title')?.textContent||'').replace(/ - .+$/,'').trim();
-    const link=item.querySelector('link')?.nextSibling?.textContent||
-               item.querySelector('link')?.textContent||'#';
-    const pubDate=item.querySelector('pubDate')?.textContent||'';
-    const src=item.querySelector('source')?.textContent||'新聞媒體';
-    const age=(Date.now()-new Date(pubDate))/1000;
+    const title=(item.title||'').replace(/ - .+$/,'').trim();
+    const link=item.link||'#';
+    const age=(Date.now()-new Date(item.pubDate))/1000;
+    const src=item.author||'新聞媒體';
     const isNew=!seen.has(title);
     if(isNew)seen.add(title);
     const a=document.createElement('a');
